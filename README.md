@@ -1,5 +1,7 @@
 # Fluid Benchmark
 
+Originally from https://github.com/PaddlePaddle/Paddle/tree/develop/benchmark/fluid
+
 This directory contains several models configurations and tools that used to run
 Fluid benchmarks for local and distributed training.
 
