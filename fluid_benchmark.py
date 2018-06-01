@@ -221,6 +221,9 @@ def train(avg_loss, infer_prog, optimizer, train_reader, test_reader, batch_acc,
     acc_4passes = None
     converge_speed = None
     train_pass_acc = fluid.average.WeightedAverage()
+    fetch_list = [avg_loss]
+    if batch_acc is not None:
+        fetch_list.append(batch_acc)
 
     iters, num_samples, start_time = 0, 0, time.time()
     for pass_id in range(args.pass_num):
@@ -232,23 +235,31 @@ def train(avg_loss, infer_prog, optimizer, train_reader, test_reader, batch_acc,
                 num_samples = 0
             if iters == args.iterations:
                 break
-            loss, acc = exe.run(train_prog,
+            outs = exe.run(train_prog,
                            feed=feeder.feed(data),
-                           fetch_list=[avg_loss, batch_acc])
+                           fetch_list=fetch_list)
             iters += 1
             num_samples += len(data)
+            loss = outs[0]
+            if batch_acc is not None:
+                acc = outs[1]
+                train_pass_acc.add(value=acc, weight=len(data))
+            else:
+                acc = None
             train_losses.append(loss)
-            train_pass_acc.add(value=acc, weight=len(data))
-            print("Pass: %d, Iter: %d, Loss: %f\n" %
-                  (pass_id, iters, np.mean(train_losses)))
-            if converge_speed is not None and args.acc_target and acc >= args.acc_target:
+            print("Pass: %d, Iter: %d, Loss: %f, acc %s\n" %
+                  (pass_id, iters, np.mean(train_losses), str(acc)))
+            if converge_speed is None and args.acc_target and acc >= args.acc_target:
                 converge_speed = time.time() - start_time
-                print("converge_speed set with %d" % converge_speed)
+                print("converge_speed set with %f" % converge_speed)
         train_elapsed = time.time() - start_time
         examples_per_sec = num_samples / train_elapsed
-        pass_train_acc = train_pass_acc.eval()
+        if batch_acc is not None:
+            pass_train_acc = train_pass_acc.eval()
+        else:
+            pass_train_acc = None
 
-        if pass_id == 4:
+        if pass_id == 4 and batch_acc is not None:
             print("acc_4passes set with %f" % pass_train_acc)
             acc_4passes = float(pass_train_acc)
 
@@ -310,7 +321,9 @@ def train_parallel(avg_loss, infer_prog, optimizer, train_reader, test_reader,
     acc_4passes = None
     converge_speed = None
     accuracy_evaluator = fluid.metrics.Accuracy()
-
+    fetch_list = [avg_loss.name]
+    if batch_acc is not None:
+        fetch_list.append(batch_acc.name)
     start_time = time.time()
 
     for pass_id in range(args.pass_num):
@@ -330,31 +343,36 @@ def train_parallel(avg_loss, infer_prog, optimizer, train_reader, test_reader,
             if iters == args.iterations:
                 break
             if args.use_fake_data:
-                outs = exe.run([avg_loss.name, batch_acc.name])
+                outs = exe.run(fetch_list)
             else:
-                outs = exe.run([avg_loss.name, batch_acc.name], feed=feeder.feed(data))
-            
+                outs = exe.run(fetch_list, feed=feeder.feed(data))   
 
             if args.update_method == "pserver":
                 exe.bcast_params()
             num_samples += len(data)
             iters += 1
-            acc = np.mean(outs[1]).item()
 
-            accuracy_evaluator.update(value=acc, weight=len(data))
+            if batch_acc is not None:
+                acc = np.mean(outs[1]).item()
+                accuracy_evaluator.update(value=acc, weight=len(data))
+            else:
+                acc = None
 
             if batch_id % 1 == 0:
-                print("Pass %d, batch %d, loss %s" %
-                      (pass_id, batch_id, np.mean(outs[0])))
+                print("Pass %d, batch %d, loss %s, acc %s" %
+                      (pass_id, batch_id, np.mean(outs[0]), str(acc)))
             if converge_speed is None and args.acc_target and acc >= args.acc_target:
                     converge_speed = time.time() - start_time
-                    print("converge_speed set with %d" % converge_speed)
+                    print("converge_speed set with %f" % converge_speed)
         
         pass_elapsed = time.time() - pass_start_time
         examples_per_sec = num_samples / pass_elapsed
-        pass_train_acc = accuracy_evaluator.eval()
+        if batch_acc is not None:
+            pass_train_acc = accuracy_evaluator.eval()
+        else:
+            pass_train_acc = None
 
-        if pass_id == 4:
+        if pass_id == 4 and batch_acc is not None:
             print("acc_4passes set with %f" % pass_train_acc)
             acc_4passes = float(pass_train_acc)
 
@@ -370,10 +388,11 @@ def output_metric_data(pass_id, examples_per_sec, pass_train_acc, acc_4passes, c
     msgs = []
     msgs.append("pass = %d" % pass_id)
     msgs.append("train_speed = %f" % float(examples_per_sec))
-    msgs.append("train_accuracy = %f" % pass_train_acc)
+    if isinstance(pass_train_acc, float):
+        msgs.append("train_accuracy = %f" % pass_train_acc)
     if isinstance(acc_4passes, float):
         msgs.append("acc_4passes = %f" % acc_4passes)
-    if isinstance(converge_speed, int):
+    if isinstance(converge_speed, float):
         msgs.append("converge_speed = %d" % converge_speed)
     print("**metrics_data: " + ", ".join(msgs))
 
