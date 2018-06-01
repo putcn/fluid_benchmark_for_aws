@@ -393,7 +393,7 @@ def output_metric_data(pass_id, examples_per_sec, pass_train_acc, acc_4passes, c
     if isinstance(acc_4passes, float):
         msgs.append("acc_4passes = %f" % acc_4passes)
     if isinstance(converge_speed, float):
-        msgs.append("converge_speed = %d" % converge_speed)
+        msgs.append("converge_speed = %f" % converge_speed)
     print("**metrics_data: " + ", ".join(msgs))
 
 def print_arguments(args):
